@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เกมสมอง หมากฮอสไทย (Thai Checkers)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
+        
+        body {
+            font-family: 'Kanit', sans-serif;
+            background-color: #1a202c; /* Dark background */
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            color: #e2e8f0;
+        }
+
+        /* Board Styling */
+        #board-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px; /* Max size for desktop */
+            aspect-ratio: 1 / 1;
+            background-color: #f3d2a3; /* Light wood color */
+            border: 12px solid #5c3a21; /* Dark wood border */
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            overflow: hidden;
+            touch-action: none; /* Prevent scroll on drag/touch */
+        }
+
+        #board-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            width: 100%;
+            height: 100%;
+        }
+
+        .square {
+            width: 100%;
+            height: 100%;
+        }
+
+        .square.dark {
+            background-color: #a05a2c; /* Dark wood square */
+        }
+        
+        .square.light {
+            background-color: #ebc69a; /* Light wood square */
+        }
+
+        /* Highlight for valid target squares */
+        .valid-move-indicator {
+            position: absolute;
+            width: 30%;
+            height: 30%;
+            background-color: rgba(52, 211, 153, 0.7); /* Emerald green */
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 0 10px rgba(52, 211, 153, 0.9);
+        }
+
+        /* Highlight for capture targets */
+        .valid-capture-indicator {
+            background-color: rgba(239, 68, 68, 0.7); /* Red */
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.9);
+        }
+
+        /* Piece Styling */
+        .piece {
+            position: absolute;
+            width: 10%; /* 80% of cell width (12.5% * 0.8 = 10) */
+            height: 10%;
+            border-radius: 50%;
+            top: 0;
+            left: 0;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.4), inset 0 -4px 4px rgba(0,0,0,0.2), inset 0 2px 4px rgba(255,255,255,0.4);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            /* Center piece in its 12.5% cell (1.25% margin) */
+            margin-top: 1.25%;
+            margin-left: 1.25%;
+        }
+
+        .piece.p1 {
+            background: radial-gradient(circle at 30% 30%, #f43f5e, #be123c); /* Red pieces */
+            border: 2px solid #881337;
+        }
+
+        .piece.p2 {
+            background: radial-gradient(circle at 30% 30%, #4b5563, #111827); /* Black pieces */
+            border: 2px solid #030712;
+        }
+
+        /* King styling (Crown SVG inside) */
+        .piece svg {
+            width: 60%;
+            height: 60%;
+            fill: #fbbf24; /* Gold */
+            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5));
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .piece.king svg {
+            opacity: 1;
+        }
+        
+        .piece.king.p1 {
+            border: 3px solid #fbbf24;
+        }
+        
+        .piece.king.p2 {
+            border: 3px solid #fbbf24;
+        }
+
+        .piece.selected {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px 5px rgba(250, 204, 21, 0.8); /* Yellow glow */
+            z-index: 20;
+        }
+
+        /* Mandatory capture highlight animation */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px) rotate(-5deg); }
+            50% { transform: translateX(5px) rotate(5deg); }
+            75% { transform: translateX(-5px) rotate(-5deg); }
+        }
+        .must-capture-warning {
+            animation: shake 0.4s ease-in-out;
+            box-shadow: 0 0 15px 5px rgba(239, 68, 68, 0.8) !important;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <!-- Start Menu Overlay -->
+    <div id="start-menu" class="fixed inset-0 bg-black/95 flex flex-col justify-center items-center z-[100] transition-opacity duration-500">
+        <h1 class="text-5xl md:text-7xl font-extrabold mb-12 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 drop-shadow-lg tracking-wider">
+            หมากฮอสไทย
+        </h1>
+        
+        <div id="mode-selection" class="flex flex-col gap-6 w-full max-w-xs">
+            <button onclick="showAISelection()" class="px-6 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-2xl shadow-[0_0_15px_rgba(37,99,235,0.5)] font-bold text-xl transition-all transform hover:scale-105 border border-blue-400">
+                👤 เล่น 1 คน (AI)
+            </button>
+            <button onclick="startGame('2p', null)" class="px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white rounded-2xl shadow-[0_0_15px_rgba(16,185,129,0.5)] font-bold text-xl transition-all transform hover:scale-105 border border-green-400">
+                👥 เล่น 2 คน
+            </button>
+        </div>
+
+        <div id="ai-selection" class="hidden flex-col gap-4 w-full max-w-xs mt-4">
+            <h2 class="text-white text-center text-2xl font-semibold mb-4 text-blue-200">เลือกระดับความยาก</h2>
+            <button onclick="startGame('1p', 'easy')" class="px-6 py-3 bg-green-500 hover:bg-green-400 text-white rounded-xl shadow-[0_0_10px_rgba(34,197,94,0.5)] font-bold text-lg transition-transform transform hover:scale-105 border border-green-300">🟢 ระดับ เด็ก</button>
+            <button onclick="startGame('1p', 'medium')" class="px-6 py-3 bg-yellow-500 hover:bg-yellow-400 text-white rounded-xl shadow-[0_0_10px_rgba(234,179,8,0.5)] font-bold text-lg transition-transform transform hover:scale-105 border border-yellow-300">🟡 ระดับ ผู้ใหญ่</button>
+            <button onclick="startGame('1p', 'hard')" class="px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-[0_0_10px_rgba(220,38,38,0.5)] font-bold text-lg transition-transform transform hover:scale-105 border border-red-400">🔴 ระดับ เซียน</button>
+            <button onclick="backToModeSelect()" class="px-6 py-2 mt-4 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-xl shadow font-semibold transition">ย้อนกลับ</button>
+        </div>
+    </div>
+
+    <div class="w-full max-w-lg mb-6 flex flex-col items-center">
+        <h1 class="text-3xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500">
+            หมากฮอสไทย
+        </h1>
+        
+        <!-- Score & Status Board -->
+        <div class="w-full bg-gray-800 rounded-xl p-4 shadow-lg border border-gray-700 flex justify-between items-center mb-4">
+            <!-- P2 (Black) Info -->
+            <div class="flex items-center gap-3 w-1/3">
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-gray-600 to-gray-900 border-2 border-gray-900 shadow-md"></div>
+                <div class="flex flex-col">
+                    <span class="text-sm font-semibold text-gray-400">หมากดำ</span>
+                    <span class="text-xl font-bold" id="score-p2">8</span>
+                </div>
+            </div>
+
+            <!-- Turn Indicator -->
+            <div class="flex-1 flex justify-center">
+                <div id="turn-indicator" class="px-4 py-2 rounded-full font-bold text-sm tracking-wide bg-red-900/50 text-red-400 border border-red-700/50 transition-colors duration-300">
+                    ตานี้: หมากแดง
+                </div>
+            </div>
+
+            <!-- P1 (Red) Info -->
+            <div class="flex items-center gap-3 w-1/3 justify-end">
+                <div class="flex flex-col text-right">
+                    <span class="text-sm font-semibold text-gray-400">หมากแดง</span>
+                    <span class="text-xl font-bold" id="score-p1">8</span>
+                </div>
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-red-500 to-rose-800 border-2 border-rose-900 shadow-md"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="board-container">
+        <div id="board-grid">
+            <!-- Squares generated by JS -->
+        </div>
+        <!-- Pieces generated by JS -->
+    </div>
+
+    <div class="mt-8 flex gap-4">
+        <button id="reset-btn" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg shadow font-semibold transition">
+            เริ่มเกมใหม่
+        </button>
+    </div>
+
+    <!-- Winner Modal Overlay -->
+    <div id="winner-modal" class="fixed inset-0 bg-black/80 hidden flex-col justify-center items-center z-50">
+        <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700 flex flex-col items-center max-w-sm w-full mx-4 text-center">
+            <h2 id="winner-text" class="text-3xl font-bold mb-2 text-yellow-400">หมากแดง ชนะ!</h2>
+            <p class="text-gray-300 mb-6">จบเกมอย่างสวยงาม</p>
+            <button onclick="initGame()" class="px-8 py-3 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-black font-bold rounded-full shadow-lg transition-transform transform hover:scale-105">
+                เล่นอีกครั้ง
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Constants
+        const EMPTY = 0;
+        const P1 = 1;      // Red Man (Moves UP)
+        const P2 = 2;      // Black Man (Moves DOWN)
+        const P1_KING = 3; // Red King
+        const P2_KING = 4; // Black King
+
+        // Crown SVG for Kings
+        const CROWN_SVG = `<svg viewBox="0 0 576 512"><path d="M576 136c0 22.09-17.91 40-40 40c-.248 0-.455-.126-.703-.13l-50.2 111.3C477 305.8 459 320 437.8 320H138.2c-21.22 0-39.2-14.2-47.33-32.9L40.7 175.9C40.45 175.9 40.25 176 40 176c-22.09 0-40-17.91-40-40S17.91 96 40 96c14.6 0 27.37 7.918 34.34 19.82l104.9-69.94C180.3 45.41 180.1 44.72 180.1 44C180.1 19.7 199.8 0 224 0s44 19.7 44 44c0 .87-.19 1.71-.34 2.54L383 14.5c9.2-7.8 21.6-11.2 33.6-9.1C440.4 9.6 459.7 30.1 459.7 54.4c0 14.3-6.7 27.5-18.1 36l-89.9 66.8 56.6 127.8 82.2-182.2c7-11.9 19.7-19.8 34.3-19.8C558.1 96 576 113.9 576 136zM464 400H112c-26.5 0-48 21.5-48 48v32c0 17.7 14.3 32 32 32h384c17.7 0 32-14.3 32-32v-32c0-26.5-21.5-48-48-48z"/></svg>`;
+
+        // Game State
+        let board = [];
+        let currentTurn = 1; // 1 (P1-Red) or 2 (P2-Black)
+        let selectedPiece = null; // {r, c}
+        let validMovesForSelected = []; // Array of move objects
+        
+        // Mandatory capture tracking
+        let globalMandatoryCaptures = []; // Pieces that MUST capture this turn
+        let multiCaptureLockedPiece = null; // If a piece is mid-combo, lock selection to it
+
+        let piecesP1 = 8;
+        let piecesP2 = 8;
+        let gameOver = false;
+        
+        // Game Settings
+        let gameMode = '2p'; // '1p' or '2p'
+        let aiDifficulty = 'easy'; // 'easy', 'medium', 'hard'
+
+        // DOM Elements
+        const boardContainer = document.getElementById('board-container');
+        const boardGrid = document.getElementById('board-grid');
+        const turnIndicator = document.getElementById('turn-indicator');
+        const scoreP1El = document.getElementById('score-p1');
+        const scoreP2El = document.getElementById('score-p2');
+        const winnerModal = document.getElementById('winner-modal');
+        const winnerText = document.getElementById('winner-text');
+        
+        // Menu Elements
+        const startMenu = document.getElementById('start-menu');
+        const modeSelection = document.getElementById('mode-selection');
+        const aiSelection = document.getElementById('ai-selection');
+
+        function showAISelection() {
+            modeSelection.classList.add('hidden');
+            aiSelection.classList.remove('hidden');
+            aiSelection.classList.add('flex');
+        }
+
+        function backToModeSelect() {
+            aiSelection.classList.add('hidden');
+            aiSelection.classList.remove('flex');
+            modeSelection.classList.remove('hidden');
+            modeSelection.classList.add('flex');
+        }
+
+        function startGame(mode, difficulty) {
+            gameMode = mode;
+            aiDifficulty = difficulty;
+            startMenu.classList.add('hidden');
+            startMenu.classList.remove('flex');
+            initGame();
+        }
+        
+        function drawBoardGrid() {
+            boardGrid.innerHTML = '';
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const square = document.createElement('div');
+                    square.classList.add('square');
+                    // In Checkers, top-left (0,0) is usually light. Pieces go on dark squares.
+                    if ((r + c) % 2 === 1) {
+                        square.classList.add('dark');
+                        // Add click listener to empty dark squares for movement
+                        square.addEventListener('click', () => handleSquareClick(r, c));
+                    } else {
+                        square.classList.add('light');
+                    }
+                    // Add coordinate attribute for easy querying
+                    square.setAttribute('data-r', r);
+                    square.setAttribute('data-c', c);
+                    boardGrid.appendChild(square);
+                }
+            }
+        }
+
+        function initGame() {
+            board = Array(8).fill().map(() => Array(8).fill(EMPTY));
+            
+            // Standard Thai Checkers Setup (8 pieces each)
+            // P2 (Black) on rows 0 and 1
+            board[0][1] = P2; board[0][3] = P2; board[0][5] = P2; board[0][7] = P2;
+            board[1][0] = P2; board[1][2] = P2; board[1][4] = P2; board[1][6] = P2;
+            
+            // P1 (Red) on rows 6 and 7
+            board[6][1] = P1; board[6][3] = P1; board[6][5] = P1; board[6][7] = P1;
+            board[7][0] = P1; board[7][2] = P1; board[7][4] = P1; board[7][6] = P1;
+
+            currentTurn = 1;
+            selectedPiece = null;
+            validMovesForSelected = [];
+            globalMandatoryCaptures = [];
+            multiCaptureLockedPiece = null;
+            piecesP1 = 8;
+            piecesP2 = 8;
+            gameOver = false;
+            
+            // Update UI Labels for Game Mode
+            const p2Label = document.querySelector('#score-p2').previousElementSibling;
+            if (gameMode === '1p') {
+                let diffText = aiDifficulty === 'easy' ? 'เด็ก' : (aiDifficulty === 'medium' ? 'ผู้ใหญ่' : 'เซียน');
+                p2Label.textContent = `หมากดำ (AI ${diffText})`;
+            } else {
+                p2Label.textContent = `หมากดำ`;
+            }
+            
+            winnerModal.classList.add('hidden');
+            winnerModal.classList.remove('flex');
+
+            updateTurnUI();
+            updateScoreUI();
+            drawBoardGrid(); // Redraw grid to clear old highlights
+            scanGlobalMandatoryCaptures();
+            renderPieces();
+        }
+
+        function isOwnPiece(player, pieceVal) {
+            if (pieceVal === EMPTY) return false;
+            if (player === 1) return pieceVal === P1 || pieceVal === P1_KING;
+            if (player === 2) return pieceVal === P2 || pieceVal === P2_KING;
+            return false;
+        }
+
+        function isEnemyPiece(player, pieceVal) {
+            if (pieceVal === EMPTY) return false;
+            if (player === 1) return pieceVal === P2 || pieceVal === P2_KING;
+            if (player === 2) return pieceVal === P1 || pieceVal === P1_KING;
+            return false;
+        }
+
+        function isKing(pieceVal) {
+            return pieceVal === P1_KING || pieceVal === P2_KING;
+        }
+
+        // Returns array of objects: {r, c, isCapture, enemyR, enemyC}
+        function getValidMoves(r, c, player, checkCaptureOnly = false, customBoard = null) {
+            let b = customBoard || board;
+            let piece = b[r][c];
+            let king = isKing(piece);
+            let captures = [];
+            let moves = [];
+
+            if (king) {
+                // Flying King (ฮอส)
+                let dirs = [[-1,-1], [-1,1], [1,-1], [1,1]];
+                for (let [dr, dc] of dirs) {
+                    let currR = r + dr;
+                    let currC = c + dc;
+                    let enemyPos = null;
+                    
+                    while (currR >= 0 && currR < 8 && currC >= 0 && currC < 8) {
+                        let target = b[currR][currC];
+                        
+                        if (target === EMPTY) {
+                            if (enemyPos) {
+                                // Landing spot after a jump
+                                captures.push({ r: currR, c: currC, isCapture: true, enemyR: enemyPos.r, enemyC: enemyPos.c });
+                            } else {
+                                // Normal move
+                                moves.push({ r: currR, c: currC, isCapture: false });
+                            }
+                        } else if (isEnemyPiece(player, target)) {
+                            if (enemyPos) break; // Cannot jump over TWO pieces in the same line
+                            enemyPos = { r: currR, c: currC };
+                        } else {
+                            // Own piece blocks path
+                            break;
+                        }
+                        currR += dr;
+                        currC += dc;
+                    }
+                }
+            } else {
+                // Normal Men (เบี้ย)
+                // P1 moves UP (-1), P2 moves DOWN (+1)
+                let forward = player === 1 ? -1 : 1;
+                let dirs = [[forward, -1], [forward, 1]];
+
+                for (let [dr, dc] of dirs) {
+                    let targetR = r + dr;
+                    let targetC = c + dc;
+
+                    if (targetR >= 0 && targetR < 8 && targetC >= 0 && targetC < 8) {
+                        let target = b[targetR][targetC];
+                        if (target === EMPTY) {
+                            moves.push({ r: targetR, c: targetC, isCapture: false });
+                        } else if (isEnemyPiece(player, target)) {
+                            // Check jump (one square beyond enemy)
+                            let jumpR = targetR + dr;
+                            let jumpC = targetC + dc;
+                            
+                            if (jumpR >= 0 && jumpR < 8 && jumpC >= 0 && jumpC < 8) {
+                                if (b[jumpR][jumpC] === EMPTY) {
+                                    captures.push({ r: jumpR, c: jumpC, isCapture: true, enemyR: targetR, enemyC: targetC });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Mandatory Capture Rule: If any captures exist, normal moves are invalid
+            if (checkCaptureOnly) {
+                return captures;
+            } else {
+                return captures.length > 0 ? captures : moves;
+            }
+        }
+
+        function scanGlobalMandatoryCaptures() {
+            globalMandatoryCaptures = [];
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    if (isOwnPiece(currentTurn, board[r][c])) {
+                        let caps = getValidMoves(r, c, currentTurn, true);
+                        if (caps.length > 0) {
+                            globalMandatoryCaptures.push({r, c});
+                        }
+                    }
+                }
+            }
+        }
+
+        function isMandatoryPiece(r, c) {
+            return globalMandatoryCaptures.some(p => p.r === r && p.c === c);
+        }
+
+        function endTurn() {
+            // Check win conditions
+            if (piecesP1 === 0) return endGame(2);
+            if (piecesP2 === 0) return endGame(1);
+
+            currentTurn = currentTurn === 1 ? 2 : 1;
+            selectedPiece = null;
+            validMovesForSelected = [];
+            multiCaptureLockedPiece = null;
+            
+            updateTurnUI();
+            scanGlobalMandatoryCaptures();
+            
+            // Check if next player has NO moves (Stalemate = Loss in Checkers)
+            let hasAnyMove = false;
+            for (let r = 0; r < 8 && !hasAnyMove; r++) {
+                for (let c = 0; c < 8 && !hasAnyMove; c++) {
+                    if (isOwnPiece(currentTurn, board[r][c])) {
+                        if (getValidMoves(r, c, currentTurn).length > 0) {
+                            hasAnyMove = true;
+                        }
+                    }
+                }
+            }
+            if (!hasAnyMove) {
+                endGame(currentTurn === 1 ? 2 : 1);
+            } else {
+                renderPieces(); // Update UI
+                
+                // Trigger AI Turn if playing 1P mode
+                if (gameMode === '1p' && currentTurn === 2 && !gameOver) {
+                    setTimeout(makeAiMove, 600); // Small delay to feel natural
+                }
+            }
+        }
+
+        function handlePieceClick(r, c) {
+            if (gameOver) return;
+            // Prevent human from clicking during AI turn
+            if (gameMode === '1p' && currentTurn === 2) return; 
+
+            // Clicking own piece
+            if (isOwnPiece(currentTurn, board[r][c])) {
+                
+                // If locked in multi-capture combo, can't select other pieces
+                if (multiCaptureLockedPiece) {
+                    if (r === multiCaptureLockedPiece.r && c === multiCaptureLockedPiece.c) {
+                        // Already selected, re-render just in case
+                    } else {
+                        // Shake animation to warn player
+                        warnMandatory(r, c);
+                    }
+                    return;
+                }
+
+                // If there are mandatory captures globally, enforce selecting one
+                if (globalMandatoryCaptures.length > 0 && !isMandatoryPiece(r, c)) {
+                    warnMandatory(r, c);
+                    return;
+                }
+
+                selectedPiece = { r, c };
+                validMovesForSelected = getValidMoves(r, c, currentTurn);
+                renderPieces(); // Updates highlights
+            }
+        }
+
+        function warnMandatory(r, c) {
+            const pieceEl = document.querySelector(`.piece[data-r="${r}"][data-c="${c}"]`);
+            if (pieceEl) {
+                pieceEl.classList.remove('must-capture-warning');
+                void pieceEl.offsetWidth; // Trigger reflow
+                pieceEl.classList.add('must-capture-warning');
+            }
+        }
+
+        function handleSquareClick(r, c) {
+            if (gameOver || !selectedPiece) return;
+
+            // Check if clicked square is in valid moves
+            let moveInfo = validMovesForSelected.find(m => m.r === r && m.c === c);
+            
+            if (moveInfo) {
+                executeMove(selectedPiece.r, selectedPiece.c, moveInfo);
+            } else {
+                // Clicked invalid empty square, deselect if not locked
+                if (!multiCaptureLockedPiece) {
+                    selectedPiece = null;
+                    validMovesForSelected = [];
+                    renderPieces();
+                }
+            }
+        }
+
+        function executeMove(fromR, fromC, move) {
+            let toR = move.r;
+            let toC = move.c;
+            
+            // Move piece in array
+            let pieceType = board[fromR][fromC];
+            board[toR][toC] = pieceType;
+            board[fromR][fromC] = EMPTY;
+
+            let captured = false;
+            // Handle Capture Removal
+            if (move.isCapture) {
+                board[move.enemyR][move.enemyC] = EMPTY;
+                captured = true;
+                if (currentTurn === 1) {
+                    piecesP2--;
+                } else {
+                    piecesP1--;
+                }
+                updateScoreUI();
+            }
+
+            // Handle Promotion
+            let promoted = false;
+            if (!isKing(pieceType)) {
+                if (currentTurn === 1 && toR === 0) {
+                    board[toR][toC] = P1_KING;
+                    promoted = true;
+                } else if (currentTurn === 2 && toR === 7) {
+                    board[toR][toC] = P2_KING;
+                    promoted = true;
+                }
+            }
+
+            // Re-render immediately so piece glides to new spot
+            selectedPiece = null; // Clear temporarily to hide move indicators during animation
+            validMovesForSelected = [];
+            renderPieces();
+
+            // Check Multi-Capture (Combo)
+            // Rules: If captured AND piece didn't just promote, check if CAN capture again
+            if (captured && !promoted) {
+                let nextCaptures = getValidMoves(toR, toC, currentTurn, true);
+                if (nextCaptures.length > 0) {
+                    // MUST continue capturing
+                    multiCaptureLockedPiece = { r: toR, c: toC };
+                    selectedPiece = { r: toR, c: toC };
+                    validMovesForSelected = nextCaptures;
+                    
+                    // Delay slightly to let animation finish before showing new target
+                    setTimeout(() => { 
+                        renderPieces(); 
+                        
+                        // If it's AI's turn, trigger next jump automatically
+                        if (gameMode === '1p' && currentTurn === 2 && !gameOver) {
+                            setTimeout(makeAiMove, 500);
+                        }
+                    }, 300);
+                    return; // DO NOT change turn
+                }
+            }
+
+            // Turn is fully over
+            endTurn();
+        }
+
+        // --- AI Implementation ---
+        
+        function simulateSingleMove(b, fromR, fromC, move, player) {
+            let newB = b.map(row => [...row]); // Deep copy
+            let piece = newB[fromR][fromC];
+            newB[move.r][move.c] = piece;
+            newB[fromR][fromC] = EMPTY;
+            
+            if (move.isCapture) {
+                newB[move.enemyR][move.enemyC] = EMPTY;
+            }
+            
+            // Promotion
+            if (!isKing(piece)) {
+                if (player === 1 && move.r === 0) newB[move.r][move.c] = P1_KING;
+                if (player === 2 && move.r === 7) newB[move.r][move.c] = P2_KING;
+            }
+            return newB;
+        }
+
+        function evaluateBoardState(b) {
+            let score = 0;
+            for(let r=0; r<8; r++) {
+                for(let c=0; c<8; c++) {
+                    let p = b[r][c];
+                    if(p === P2) score += 10;
+                    else if(p === P2_KING) score += 30;
+                    else if(p === P1) score -= 10;
+                    else if(p === P1_KING) score -= 30;
+                    
+                    // Positional bonus for AI (P2 moves DOWN)
+                    if (p === P2) {
+                        score += (r * 0.2); // Favor advancing
+                        if (c === 0 || c === 7) score += 1; // Edge protection
+                    }
+                }
+            }
+            return score;
+        }
+
+        function getOpponentBestResponseScore(b) {
+            // Find P1's best move on this theoretical board to minimize AI's score
+            let minScoreForAi = Infinity; 
+            
+            let p1Pieces = [];
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    if (isOwnPiece(1, b[r][c])) p1Pieces.push({r, c});
+                }
+            }
+            
+            let p1Mandatory = [];
+            p1Pieces.forEach(p => {
+                let caps = getValidMoves(p.r, p.c, 1, true, b);
+                if (caps.length > 0) p1Mandatory.push(p);
+            });
+            
+            let movers = p1Mandatory.length > 0 ? p1Mandatory : p1Pieces;
+            let anyMove = false;
+            
+            movers.forEach(p => {
+                let moves = getValidMoves(p.r, p.c, 1, p1Mandatory.length > 0, b);
+                moves.forEach(m => {
+                    anyMove = true;
+                    let nextB = simulateSingleMove(b, p.r, p.c, m, 1);
+                    // Score from AI perspective (lower is worse for AI)
+                    let score = evaluateBoardState(nextB); 
+                    if (score < minScoreForAi) {
+                        minScoreForAi = score;
+                    }
+                });
+            });
+            
+            // If P1 has no moves, AI wins in this branch (very high score)
+            return anyMove ? minScoreForAi : 1000;
+        }
+
+        function getBestMove(possibleMoves, depth) {
+            let bestScore = -Infinity;
+            let bestMoves = [];
+            
+            for (let pm of possibleMoves) {
+                let testBoard = simulateSingleMove(board, pm.from.r, pm.from.c, pm.to, 2);
+                
+                let score = 0;
+                if (depth === 1) {
+                    // Medium: Just look at the board immediately after AI moves
+                    score = evaluateBoardState(testBoard);
+                } else {
+                    // Hard: Look ahead 1 opponent response (Minimax 2-ply)
+                    score = getOpponentBestResponseScore(testBoard);
+                }
+                
+                // Add a tiny randomness to break identical score ties unpredictably
+                score += Math.random() * 0.1;
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMoves = [pm];
+                } else if (score === bestScore) {
+                    bestMoves.push(pm);
+                }
+            }
+            
+            return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+        }
+
+        function makeAiMove() {
+            if (gameOver) return;
+            
+            let possibleMoves = [];
+            
+            // 1. Gather all legal moves for AI
+            if (multiCaptureLockedPiece) {
+                // Locked into a combo jump
+                let r = multiCaptureLockedPiece.r;
+                let c = multiCaptureLockedPiece.c;
+                validMovesForSelected.forEach(m => {
+                    possibleMoves.push({ from: {r, c}, to: m });
+                });
+            } else {
+                // Normal turn start
+                let piecesToCheck = [];
+                if (globalMandatoryCaptures.length > 0) {
+                    piecesToCheck = globalMandatoryCaptures; // MUST move these
+                } else {
+                    for (let r = 0; r < 8; r++) {
+                        for (let c = 0; c < 8; c++) {
+                            if (isOwnPiece(2, board[r][c])) {
+                                piecesToCheck.push({r, c});
+                            }
+                        }
+                    }
+                }
+                
+                piecesToCheck.forEach(p => {
+                    let moves = getValidMoves(p.r, p.c, 2);
+                    moves.forEach(m => {
+                        possibleMoves.push({ from: p, to: m });
+                    });
+                });
+            }
+            
+            if (possibleMoves.length === 0) return;
+            
+            // 2. Select move based on AI difficulty
+            let chosenMove = null;
+            if (aiDifficulty === 'easy') {
+                chosenMove = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+            } else if (aiDifficulty === 'medium') {
+                chosenMove = getBestMove(possibleMoves, 1); 
+            } else if (aiDifficulty === 'hard') {
+                chosenMove = getBestMove(possibleMoves, 3); 
+            }
+            
+            // 3. Execute move visually
+            selectedPiece = chosenMove.from;
+            validMovesForSelected = getValidMoves(chosenMove.from.r, chosenMove.from.c, 2);
+            renderPieces(); // Show selection highlight briefly
+            
+            setTimeout(() => {
+                executeMove(chosenMove.from.r, chosenMove.from.c, chosenMove.to);
+            }, 400); // 400ms delay to simulate "thinking/moving" time
+        }
+
+        function renderPieces() {
+            // Remove existing pieces and highlights
+            document.querySelectorAll('.piece').forEach(el => el.remove());
+            document.querySelectorAll('.valid-move-indicator').forEach(el => el.remove());
+
+            // 1. Draw valid move indicators FIRST so they are under pieces
+            if (selectedPiece) {
+                validMovesForSelected.forEach(m => {
+                    const targetSquare = document.querySelector(`.square[data-r="${m.r}"][data-c="${m.c}"]`);
+                    if (targetSquare) {
+                        const indicator = document.createElement('div');
+                        indicator.className = `valid-move-indicator ${m.isCapture ? 'valid-capture-indicator' : ''}`;
+                        targetSquare.appendChild(indicator);
+                    }
+                });
+            }
+
+            // 2. Draw pieces
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const val = board[r][c];
+                    if (val !== EMPTY) {
+                        const piece = document.createElement('div');
+                        piece.className = 'piece';
+                        piece.setAttribute('data-r', r);
+                        piece.setAttribute('data-c', c);
+
+                        if (val === P1 || val === P1_KING) piece.classList.add('p1');
+                        if (val === P2 || val === P2_KING) piece.classList.add('p2');
+                        if (val === P1_KING || val === P2_KING) {
+                            piece.classList.add('king');
+                            piece.innerHTML = CROWN_SVG;
+                        }
+
+                        if (selectedPiece && selectedPiece.r === r && selectedPiece.c === c) {
+                            piece.classList.add('selected');
+                        }
+
+                        piece.style.left = `${(c * 12.5)}%`;
+                        piece.style.top = `${(r * 12.5)}%`;
+
+                        piece.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            handlePieceClick(r, c);
+                        });
+
+                        boardContainer.appendChild(piece);
+                    }
+                }
+            }
+        }
+
+        function updateTurnUI() {
+            if (currentTurn === 1) {
+                turnIndicator.textContent = 'ตานี้: หมากแดง';
+                turnIndicator.className = 'px-4 py-2 rounded-full font-bold text-sm tracking-wide bg-red-900/50 text-red-400 border border-red-700/50 transition-colors duration-300';
+            } else {
+                turnIndicator.textContent = 'ตานี้: หมากดำ';
+                turnIndicator.className = 'px-4 py-2 rounded-full font-bold text-sm tracking-wide bg-gray-700/50 text-gray-300 border border-gray-500/50 transition-colors duration-300';
+            }
+        }
+
+        function updateScoreUI() {
+            scoreP1El.textContent = piecesP1;
+            scoreP2El.textContent = piecesP2;
+        }
+
+        function endGame(winnerPlayer) {
+            gameOver = true;
+            winnerModal.classList.remove('hidden');
+            winnerModal.classList.add('flex');
+            
+            if (winnerPlayer === 1) {
+                winnerText.textContent = 'หมากแดง ชนะ!';
+                winnerText.className = 'text-3xl font-bold mb-2 text-red-500';
+            } else {
+                winnerText.textContent = 'หมากดำ ชนะ!';
+                winnerText.className = 'text-3xl font-bold mb-2 text-gray-400';
+            }
+        }
+
+        // Initialize Game Buttons
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            // Show menu instead of auto-restarting
+            startMenu.classList.remove('hidden');
+            startMenu.classList.add('flex');
+            backToModeSelect();
+        });
+        
+        // Start on load
+        window.onload = () => {
+            // Setup empty board background while in menu
+            board = Array(8).fill().map(() => Array(8).fill(EMPTY));
+            drawBoardGrid();
+        };
+
+    </script>
+</body>
+</html>
