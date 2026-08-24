@@ -397,6 +397,8 @@
                             if (enemyPos) {
                                 // Landing spot after a jump
                                 captures.push({ r: currR, c: currC, isCapture: true, enemyR: enemyPos.r, enemyC: enemyPos.c });
+                                // FIX: ในกฎหมากฮอสไทย เมื่อฮอสกระโดดกินแล้ว ต้องตกลงที่ช่องว่างช่องแรกหลังหมากที่โดนกินทันที
+                                break; 
                             } else {
                                 // Normal move
                                 moves.push({ r: currR, c: currC, isCapture: false });
@@ -629,167 +631,213 @@
 
         // --- AI Implementation ---
         
-        function simulateSingleMove(b, fromR, fromC, move, player) {
-            let newB = b.map(row => [...row]); // Deep copy
-            let piece = newB[fromR][fromC];
-            newB[move.r][move.c] = piece;
-            newB[fromR][fromC] = EMPTY;
-            
-            if (move.isCapture) {
-                newB[move.enemyR][move.enemyC] = EMPTY;
-            }
-            
-            // Promotion
-            if (!isKing(piece)) {
-                if (player === 1 && move.r === 0) newB[move.r][move.c] = P1_KING;
-                if (player === 2 && move.r === 7) newB[move.r][move.c] = P2_KING;
-            }
-            return newB;
-        }
-
-        function evaluateBoardState(b) {
-            let score = 0;
+        function evaluateBoardStateTree(b) {
+            let p1Score = 0;
+            let p2Score = 0;
             for(let r=0; r<8; r++) {
                 for(let c=0; c<8; c++) {
                     let p = b[r][c];
-                    if(p === P2) score += 10;
-                    else if(p === P2_KING) score += 30;
-                    else if(p === P1) score -= 10;
-                    else if(p === P1_KING) score -= 30;
+                    if(p === EMPTY) continue;
                     
-                    // Positional bonus for AI (P2 moves DOWN)
-                    if (p === P2) {
-                        score += (r * 0.2); // Favor advancing
-                        if (c === 0 || c === 7) score += 1; // Edge protection
+                    let isP1 = (p === P1 || p === P1_KING);
+                    let isKing = (p === P1_KING || p === P2_KING);
+                    
+                    // Base value: Man = 100, King = 300
+                    let val = isKing ? 300 : 100;
+                    
+                    let posBonus = 0;
+                    if (!isKing) {
+                        if (isP1) {
+                            posBonus += (7 - r) * 2; // ยิ่งเดินหน้ายิ่งได้คะแนน
+                            if (r === 7) posBonus += 25; // รักษาแนวหลัง (ป้องกันฝ่ายตรงข้ามเข้าฮอส)
+                            if (c === 0 || c === 7) posBonus += 5; // ขอบกระดานปลอดภัยกว่า
+                        } else {
+                            posBonus += r * 2; 
+                            if (r === 0) posBonus += 25; 
+                            if (c === 0 || c === 7) posBonus += 5;
+                        }
+                    } else {
+                        // ฮอสชอบอยู่กลางกระดาน (คุมพื้นที่ได้เยอะกว่า)
+                        let centerDist = Math.abs(r - 3.5) + Math.abs(c - 3.5);
+                        posBonus += (7 - centerDist) * 3;
                     }
+
+                    if (isP1) p1Score += (val + posBonus);
+                    else p2Score += (val + posBonus);
                 }
             }
-            return score;
+            // มุมมองของ AI (P2) อยากให้คะแนนตัวเองมากกว่า P1
+            return p2Score - p1Score;
         }
 
-        function getOpponentBestResponseScore(b) {
-            // Find P1's best move on this theoretical board to minimize AI's score
-            let minScoreForAi = Infinity; 
+        function generateMovesForTree(b, player, lockedPos) {
+            let moves = [];
             
-            let p1Pieces = [];
-            for (let r = 0; r < 8; r++) {
-                for (let c = 0; c < 8; c++) {
-                    if (isOwnPiece(1, b[r][c])) p1Pieces.push({r, c});
-                }
-            }
-            
-            let p1Mandatory = [];
-            p1Pieces.forEach(p => {
-                let caps = getValidMoves(p.r, p.c, 1, true, b);
-                if (caps.length > 0) p1Mandatory.push(p);
-            });
-            
-            let movers = p1Mandatory.length > 0 ? p1Mandatory : p1Pieces;
-            let anyMove = false;
-            
-            movers.forEach(p => {
-                let moves = getValidMoves(p.r, p.c, 1, p1Mandatory.length > 0, b);
-                moves.forEach(m => {
-                    anyMove = true;
-                    let nextB = simulateSingleMove(b, p.r, p.c, m, 1);
-                    // Score from AI perspective (lower is worse for AI)
-                    let score = evaluateBoardState(nextB); 
-                    if (score < minScoreForAi) {
-                        minScoreForAi = score;
-                    }
+            // 1. ถ้าโดนบังคับให้กินต่อเนื่อง (Multi-capture lock)
+            if (lockedPos) {
+                let caps = getValidMoves(lockedPos.r, lockedPos.c, player, true, b);
+                caps.forEach(m => {
+                    moves.push({ from: lockedPos, to: m });
                 });
-            });
+                return moves;
+            }
             
-            // If P1 has no moves, AI wins in this branch (very high score)
-            return anyMove ? minScoreForAi : 1000;
-        }
-
-        function getBestMove(possibleMoves, depth) {
-            let bestScore = -Infinity;
-            let bestMoves = [];
-            
-            for (let pm of possibleMoves) {
-                let testBoard = simulateSingleMove(board, pm.from.r, pm.from.c, pm.to, 2);
-                
-                let score = 0;
-                if (depth === 1) {
-                    // Medium: Just look at the board immediately after AI moves
-                    score = evaluateBoardState(testBoard);
-                } else {
-                    // Hard: Look ahead 1 opponent response (Minimax 2-ply)
-                    score = getOpponentBestResponseScore(testBoard);
-                }
-                
-                // Add a tiny randomness to break identical score ties unpredictably
-                score += Math.random() * 0.1;
-                
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMoves = [pm];
-                } else if (score === bestScore) {
-                    bestMoves.push(pm);
+            // 2. หาหมากทั้งหมดของผู้เล่น
+            let allPieces = [];
+            for(let r=0; r<8; r++) {
+                for(let c=0; c<8; c++) {
+                    if (isOwnPiece(player, b[r][c])) allPieces.push({r, c});
                 }
             }
             
-            return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+            let captureMoves = [];
+            let normalMoves = [];
+            
+            // 3. เช็คหาการกินทั้งหมดก่อน (Mandatory Capture)
+            allPieces.forEach(p => {
+                let caps = getValidMoves(p.r, p.c, player, true, b);
+                caps.forEach(m => captureMoves.push({ from: p, to: m }));
+            });
+            
+            // ถ้ามีตาที่ต้องกิน บังคับคืนค่าเฉพาะตากินเท่านั้น
+            if (captureMoves.length > 0) return captureMoves;
+            
+            // 4. ถ้าไม่มีให้กิน ถึงจะเดินปกติได้
+            allPieces.forEach(p => {
+                let norms = getValidMoves(p.r, p.c, player, false, b);
+                norms.forEach(m => normalMoves.push({ from: p, to: m }));
+            });
+            
+            return normalMoves;
+        }
+
+        function simulateMoveTree(b, move, player) {
+            let newB = b.map(row => [...row]);
+            let piece = newB[move.from.r][move.from.c];
+            newB[move.to.r][move.to.c] = piece;
+            newB[move.from.r][move.from.c] = EMPTY;
+            
+            let promoted = false;
+            // ลบตัวที่ถูกกิน
+            if (move.to.isCapture) {
+                newB[move.to.enemyR][move.to.enemyC] = EMPTY;
+            }
+            
+            // โปรโมทฮอส
+            if (!isKing(piece)) {
+                if (player === 1 && move.to.r === 0) { newB[move.to.r][move.to.c] = P1_KING; promoted = true; }
+                if (player === 2 && move.to.r === 7) { newB[move.to.r][move.to.c] = P2_KING; promoted = true; }
+            }
+            
+            let nextPlayer = player === 1 ? 2 : 1;
+            let nextLocked = null;
+            
+            // เช็คกินต่อเนื่อง
+            if (move.to.isCapture && !promoted) {
+                let nextCaps = getValidMoves(move.to.r, move.to.c, player, true, newB);
+                if (nextCaps.length > 0) {
+                    nextPlayer = player; // ได้เล่นต่อ (ยังไม่เปลี่ยนตา)
+                    nextLocked = { r: move.to.r, c: move.to.c };
+                }
+            }
+            
+            return { newB, nextPlayer, nextLocked };
+        }
+
+        // Minimax with Alpha-Beta Pruning
+        function minimax(b, depth, alpha, beta, currentPlayer, lockedPos) {
+            if (depth <= 0) return evaluateBoardStateTree(b);
+            
+            let moves = generateMovesForTree(b, currentPlayer, lockedPos);
+            
+            // ฝ่ายใดไม่มีตาเดิน ฝ่ายนั้นแพ้ (คืนค่าคะแนนสูงสุด/ต่ำสุด)
+            if (moves.length === 0) {
+                // หาก AI (2) ไม่มีตาเดิน แสดงว่า AI แพ้, หากผู้เล่นไม่มี แสดงว่า AI ชนะ 
+                // บวก/ลบค่า depth เข้าไปเพื่อให้ AI เลือกทางที่ชนะเร็วที่สุด หรือแพ้ช้าที่สุด
+                return currentPlayer === 2 ? -99000 - depth : 99000 + depth;
+            }
+            
+            if (currentPlayer === 2) { // AI's turn (Maximizing)
+                let maxEval = -Infinity;
+                for (let m of moves) {
+                    let { newB, nextPlayer, nextLocked } = simulateMoveTree(b, m, currentPlayer);
+                    // ถ้ากินต่อได้ depth จะไม่ลดลง เพื่อให้คำนวณสุดสายคอมโบ
+                    let nextDepth = (nextPlayer === currentPlayer) ? depth : depth - 1;
+                    let ev = minimax(newB, nextDepth, alpha, beta, nextPlayer, nextLocked);
+                    maxEval = Math.max(maxEval, ev);
+                    alpha = Math.max(alpha, ev);
+                    if (beta <= alpha) break; // Pruning
+                }
+                return maxEval;
+            } else { // Player's turn (Minimizing)
+                let minEval = Infinity;
+                for (let m of moves) {
+                    let { newB, nextPlayer, nextLocked } = simulateMoveTree(b, m, currentPlayer);
+                    let nextDepth = (nextPlayer === currentPlayer) ? depth : depth - 1;
+                    let ev = minimax(newB, nextDepth, alpha, beta, nextPlayer, nextLocked);
+                    minEval = Math.min(minEval, ev);
+                    beta = Math.min(beta, ev);
+                    if (beta <= alpha) break; // Pruning
+                }
+                return minEval;
+            }
+        }
+
+        function getBestMoveAI(depth) {
+            let moves = generateMovesForTree(board, 2, multiCaptureLockedPiece);
+            if (moves.length === 0) return null;
+            
+            let bestMove = null;
+            let bestValue = -Infinity;
+            let alpha = -Infinity;
+            let beta = Infinity;
+            
+            // สุ่มลำดับเล็กน้อย ป้องกัน AI เล่นท่าเดิมๆ ซ้ำซากเมื่อคะแนนเท่ากัน
+            moves.sort(() => Math.random() - 0.5);
+            
+            for (let m of moves) {
+                let { newB, nextPlayer, nextLocked } = simulateMoveTree(board, m, 2);
+                let nextDepth = (nextPlayer === 2) ? depth : depth - 1;
+                let boardVal = minimax(newB, nextDepth, alpha, beta, nextPlayer, nextLocked);
+                
+                if (boardVal > bestValue) {
+                    bestValue = boardVal;
+                    bestMove = m;
+                }
+                alpha = Math.max(alpha, bestValue);
+            }
+            
+            return bestMove;
         }
 
         function makeAiMove() {
             if (gameOver) return;
             
-            let possibleMoves = [];
-            
-            // 1. Gather all legal moves for AI
-            if (multiCaptureLockedPiece) {
-                // Locked into a combo jump
-                let r = multiCaptureLockedPiece.r;
-                let c = multiCaptureLockedPiece.c;
-                validMovesForSelected.forEach(m => {
-                    possibleMoves.push({ from: {r, c}, to: m });
-                });
-            } else {
-                // Normal turn start
-                let piecesToCheck = [];
-                if (globalMandatoryCaptures.length > 0) {
-                    piecesToCheck = globalMandatoryCaptures; // MUST move these
-                } else {
-                    for (let r = 0; r < 8; r++) {
-                        for (let c = 0; c < 8; c++) {
-                            if (isOwnPiece(2, board[r][c])) {
-                                piecesToCheck.push({r, c});
-                            }
-                        }
-                    }
-                }
-                
-                piecesToCheck.forEach(p => {
-                    let moves = getValidMoves(p.r, p.c, 2);
-                    moves.forEach(m => {
-                        possibleMoves.push({ from: p, to: m });
-                    });
-                });
-            }
-            
-            if (possibleMoves.length === 0) return;
-            
-            // 2. Select move based on AI difficulty
             let chosenMove = null;
             if (aiDifficulty === 'easy') {
-                chosenMove = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+                // ระดับเด็ก: เดินมั่วไปเรื่อยๆ (แต่ยังต้องรักษากฏการกิน)
+                let moves = generateMovesForTree(board, 2, multiCaptureLockedPiece);
+                if (moves.length > 0) {
+                    chosenMove = moves[Math.floor(Math.random() * moves.length)];
+                }
             } else if (aiDifficulty === 'medium') {
-                chosenMove = getBestMove(possibleMoves, 1); 
+                // ระดับผู้ใหญ่: มองล่วงหน้า 3 ตา
+                chosenMove = getBestMoveAI(3); 
             } else if (aiDifficulty === 'hard') {
-                chosenMove = getBestMove(possibleMoves, 3); 
+                // ระดับเซียน: มองล่วงหน้า 6 ตา (Alpha-Beta ทำให้ประมวลผลเร็วมาก)
+                chosenMove = getBestMoveAI(6); 
             }
             
-            // 3. Execute move visually
+            if (!chosenMove) return;
+            
+            // จำลองการกระพริบเลือกตัวหมากให้คนเห็น
             selectedPiece = chosenMove.from;
             validMovesForSelected = getValidMoves(chosenMove.from.r, chosenMove.from.c, 2);
-            renderPieces(); // Show selection highlight briefly
+            renderPieces(); 
             
             setTimeout(() => {
                 executeMove(chosenMove.from.r, chosenMove.from.c, chosenMove.to);
-            }, 400); // 400ms delay to simulate "thinking/moving" time
+            }, 400); // ดีเลย์ให้ความรู้สึกเหมือนคนกำลังคิด
         }
 
         function renderPieces() {
